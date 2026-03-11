@@ -1,0 +1,12 @@
+{
+  "name": "go-plugin-cpp",
+  "version": "0.1.0",
+  "dependencies": [
+    "grpc",
+    "openssl",
+    {
+      "name": "gtest",
+      "host": true
+    }
+  ]
+}
