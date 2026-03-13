@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v6
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config protoc-gen-go protoc-gen-go-grpc
+      
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+      
+      - name: Restore vcpkg from cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/vcpkg
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('**/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+      
+      - name: Setup vcpkg
+        uses: friendlyanon/setup-vcpkg@v1
+        with:
+          committish: master
+      
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -G Ninja
+      
+      - name: Build
+        run: cmake --build build -j
+      
+      - name: Run tests
+        run: |
+          cd build
+          ctest --output-on-failure -V
+      
+      - name: Test example integration
+        run: |
+          cd example/host
+          go generate ./...
+          go build ./...
+          # Verify the plugin binary was built
+          ls -lh ../../build/example/greeter_plugin
