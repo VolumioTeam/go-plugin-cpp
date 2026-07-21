@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -90,6 +91,7 @@ int PickPort() {
 PluginServer::PluginServer(ServeConfig config) : config_(std::move(config)) {}
 
 PluginServer::~PluginServer() {
+  StopParentWatchdog();
   if (server_) {
     server_->Shutdown();
     server_->Wait();
@@ -102,6 +104,11 @@ bool PluginServer::Start(std::string *out_error) {
       *out_error = std::move(msg);
     return false;
   };
+
+  // Record the launching host's pid up front, before any startup work could let
+  // it reparent us — this is the baseline the parent-death watchdog compares
+  // against. The watchdog itself only starts once startup succeeds (below).
+  host_pid_ = getppid();
 
   // ── 1. Magic cookie check ────────────────────────────────────────────
   if (!ValidateMagicCookie(config_.handshake)) {
@@ -160,6 +167,10 @@ bool PluginServer::Start(std::string *out_error) {
       << "|" << server_cert_b64 << "\n";
   out.flush();
 
+  // Startup succeeded and Wait() is about to become the plugin's blocking point:
+  // start watching the host (host_pid_, captured at the top of Start()).
+  StartParentWatchdog();
+
   return true;
 }
 
@@ -169,8 +180,42 @@ void PluginServer::Wait() {
 }
 
 void PluginServer::Shutdown() {
+  // Stop (and, for external callers, join) the watchdog before tearing down the
+  // server, so no watchdog thread outlives Shutdown() for an external caller.
+  StopParentWatchdog();
   if (server_)
     server_->Shutdown();
+}
+
+void PluginServer::StartParentWatchdog() {
+  parent_watchdog_ = std::thread([this]() {
+    std::unique_lock<std::mutex> lock(watchdog_mu_);
+    while (!watchdog_stop_) {
+      // Reparenting (parent pid changes, typically to the reaper/init) means the
+      // host that launched us is gone. Drive the same Shutdown() the host would
+      // have, so we don't linger as an orphan.
+      if (getppid() != host_pid_) {
+        lock.unlock();
+        std::cerr << "go-plugin: host process exited, shutting down" << std::endl;
+        Shutdown();
+        return;
+      }
+      watchdog_cv_.wait_for(lock, std::chrono::seconds(1));
+    }
+  });
+}
+
+void PluginServer::StopParentWatchdog() {
+  {
+    std::lock_guard<std::mutex> lock(watchdog_mu_);
+    watchdog_stop_ = true;
+  }
+  watchdog_cv_.notify_all();
+  // The watchdog reaches here via its own Shutdown() call on the host-death
+  // path; it must never join itself (that deadlocks). The destructor joins it.
+  if (parent_watchdog_.joinable() &&
+      parent_watchdog_.get_id() != std::this_thread::get_id())
+    parent_watchdog_.join();
 }
 
 // ── Serve convenience function ────────────────────────────────────────────────

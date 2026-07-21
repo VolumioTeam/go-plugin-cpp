@@ -1,8 +1,12 @@
 #pragma once
 
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <ostream>
 #include <string>
+#include <sys/types.h>
+#include <thread>
 #include <vector>
 
 #include <grpcpp/grpcpp.h>
@@ -85,8 +89,8 @@ public:
     bool Start(std::string* error = nullptr);
 
     /**
-     * Blocks until the server stops (i.e. until the host process exits or
-     * Shutdown() is called).
+     * Blocks until the server stops (i.e. until Shutdown() is called or the
+     * host process exits — see the parent-death watchdog started by Start()).
      */
     void Wait();
 
@@ -97,9 +101,24 @@ public:
     int port() const { return port_; }
 
 private:
+    // Watches for the host (parent) process disappearing. go-plugin hosts stop a
+    // plugin by killing it, but when the host itself dies unexpectedly (e.g. it
+    // is SIGKILLed) nothing signals the plugin and Wait() would block forever,
+    // orphaning the process. The watchdog detects reparenting (getppid changes)
+    // and calls Shutdown(), mirroring the Go go-plugin server's built-in
+    // orphan protection. Started by Start(), stopped by Shutdown()/destruction.
+    void StartParentWatchdog();
+    void StopParentWatchdog();
+
     ServeConfig config_;
     std::unique_ptr<grpc::Server> server_;
     int port_ = 0;
+
+    std::thread parent_watchdog_;
+    std::mutex watchdog_mu_;
+    std::condition_variable watchdog_cv_;
+    bool watchdog_stop_ = false;
+    pid_t host_pid_ = 0;
 };
 
 /** Returned by the Serve() convenience function. */
