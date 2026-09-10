@@ -119,14 +119,23 @@ TEST(Log, TakesFieldsAsBracedPairs) {
 
 // printf's %g follows the locale, which would write "0,5" and be rejected.
 TEST(Log, WritesDoublesTheSameInAnyLocale) {
+    // setlocale returns the locale it just set, so the one to restore has to be
+    // read first. Without a comma-decimal locale installed there is nothing to
+    // test against, and asserting anyway would pass without exercising it.
+    const std::string original = std::setlocale(LC_NUMERIC, nullptr);
+    if (std::setlocale(LC_NUMERIC, "de_DE.UTF-8") == nullptr) {
+        GTEST_SKIP() << "no de_DE.UTF-8 locale to test against";
+    }
+
     Capture capture;
-    const char* previous = std::setlocale(LC_NUMERIC, "de_DE.UTF-8");
     go_plugin::log::Info("readings", {Field("ratio", 0.5)});
-    if (previous != nullptr) std::setlocale(LC_NUMERIC, previous);
+    std::setlocale(LC_NUMERIC, original.c_str());
 
     ASSERT_EQ(capture.lines().size(), 1u);
     EXPECT_NE(capture.lines().front().find(R"("ratio":0.5)"), std::string::npos)
         << capture.lines().front();
+    EXPECT_EQ(std::string(std::setlocale(LC_NUMERIC, nullptr)), original)
+        << "a leaked locale would follow this test into the next";
 }
 
 // JSON has no NaN or infinity.
