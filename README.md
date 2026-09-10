@@ -87,6 +87,19 @@ cmake -B build \
 cmake --build build -j
 ```
 
+That builds the library alone. The tests and the example are opt-in, so a consumer installs neither gtest nor the
+protobuf code generators they need:
+
+```bash
+cmake -B build \
+      -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DVCPKG_MANIFEST_FEATURES=tests \
+      -DGO_PLUGIN_BUILD_TESTS=ON \
+      -DGO_PLUGIN_BUILD_EXAMPLES=ON
+cmake --build build -j
+```
+
 ### Running the tests
 
 ```bash

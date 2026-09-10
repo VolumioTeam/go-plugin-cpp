@@ -4,10 +4,14 @@
   "dependencies": [
     "abseil",
     "grpc",
-    "openssl",
-    {
-      "name": "gtest",
-      "host": true
+    "openssl"
+  ],
+  "features": {
+    "tests": {
+      "description": "Build the test suite",
+      "dependencies": [
+        "gtest"
+      ]
     }
-  ]
+  }
 }
