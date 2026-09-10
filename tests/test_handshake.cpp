@@ -10,8 +10,6 @@ namespace {
 
 using Handshake = PluginFixture;
 
-// ── magic-cookie validation ───────────────────────────────────────────────────
-
 TEST_F(Handshake, FailsWithMissingCookie) {
     UnsetEnv(kCookieKey);
 
@@ -35,8 +33,6 @@ TEST_F(Handshake, SucceedsWithCorrectCookie) {
     ASSERT_TRUE(Start(&error)) << error;
     EXPECT_FALSE(handshake().empty());
 }
-
-// ── handshake line format ─────────────────────────────────────────────────────
 
 TEST_F(Handshake, StatesTheCoreAndAppProtocolVersions) {
     config_.handshake.protocol_version = 3;
@@ -75,8 +71,6 @@ TEST_F(Handshake, HasTheSixFieldsTheHostSplitsOn) {
     if (!line.empty() && line.back() == '\n') line.pop_back();
     EXPECT_EQ(std::count(line.begin(), line.end(), '|'), 5) << line;
 }
-
-// ── port range env vars ───────────────────────────────────────────────────────
 
 TEST_F(Handshake, RespectsThePortRangeTheHostAsksFor) {
     SetEnv("PLUGIN_MIN_PORT", "19900");

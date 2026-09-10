@@ -18,8 +18,7 @@ target_link_libraries(go_plugin
         OpenSSL::Crypto
 )
 
-# One backend adapter per logging library, each its own target, so a consumer
-# links only the one it uses and adding another touches nothing here.
+# One target per backend, so a consumer links only the one it uses.
 if(GO_PLUGIN_LOG_ABSL)
     add_library(go_plugin_log_absl STATIC log_absl.cpp)
     target_link_libraries(go_plugin_log_absl

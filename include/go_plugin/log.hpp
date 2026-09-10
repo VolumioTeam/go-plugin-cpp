@@ -9,16 +9,11 @@
 namespace go_plugin::log {
 
 /**
- * Level is the severity a host reads off a line. These are the only five
- * severities go-plugin understands; anything else leaves it unable to tell the
- * level and it files the line at its own.
+ * The only five severities go-plugin understands. Anything else leaves the host
+ * unable to tell the level and it files the line at its own.
  */
 enum class Level { Trace, Debug, Info, Warn, Error };
 
-/**
- * Field is one key/value pair carried by a line. Values are converted at the
- * call site, so a field costs a small string and nothing else.
- */
 class Field {
 public:
     Field(std::string_view key, std::string_view value);
@@ -33,7 +28,7 @@ public:
     const std::string& key() const { return key_; }
     const std::string& value() const { return value_; }
 
-    /** True when the value is to be written as a JSON literal rather than a string. */
+    /** Whether the value is written as a JSON literal rather than a string. */
     bool literal() const { return literal_; }
 
 private:
@@ -44,11 +39,6 @@ private:
     bool literal_ = false;
 };
 
-/**
- * Record is one line's worth of content, handed to a Sink already assembled.
- * A backend that wants to encode differently — a file, a test buffer, a second
- * transport — reads the record rather than parsing the encoded line back.
- */
 struct Record {
     Level level = Level::Info;
     std::string_view message;
@@ -57,36 +47,18 @@ struct Record {
     std::chrono::system_clock::time_point timestamp;
 };
 
-/**
- * Sink receives every record that passes the level filter. The default sink
- * encodes the record for the host and writes it to standard error in a single
- * write, so lines from different threads cannot interleave.
- */
+/** Receives every record. The default encodes it and writes it to stderr. */
 using Sink = std::function<void(const Record&)>;
 
-/** Replaces the sink. Pass nullptr to restore the default. */
+/** Pass nullptr to restore the default. */
 void SetSink(Sink sink);
 
-/** Records written through Write below this level are dropped. Info by default. */
+/** Governs Write only, not Submit. Info by default. */
 void SetLevel(Level min);
 Level GetLevel();
 bool Enabled(Level level);
 
-/** Writes one record. Cheap and thread-safe; a dropped level costs a comparison. */
 void Write(Level level, std::string_view message, std::initializer_list<Field> fields = {});
-
-/**
- * Submit hands an already-assembled record to the sink. This is the seam a
- * backend adapter sits on: a logging library that already knows the time,
- * severity and origin of a line reports it through here rather than losing them
- * to a second timestamp.
- *
- * The level set here is deliberately not applied. A record reaching Submit came
- * from a library that has already decided to emit it, under its own thresholds,
- * and dropping it a second time here would lose exactly what a plugin meant to
- * say — which is the whole reason this format exists. SetLevel governs Write.
- */
-void Submit(const Record& record);
 
 inline void Trace(std::string_view message, std::initializer_list<Field> fields = {}) {
     Write(Level::Trace, message, fields);
@@ -105,22 +77,25 @@ inline void Error(std::string_view message, std::initializer_list<Field> fields 
 }
 
 /**
- * Encode renders a record in the format the host parses, without the trailing
- * newline. Public so a backend can reuse the encoding, and so it can be tested
- * directly.
+ * The seam a backend adapter sits on, so a library that already knows a line's
+ * time, severity and origin does not lose them to a second timestamp.
+ *
+ * SetLevel is deliberately not applied: the record comes from a library that
+ * has already decided to emit it, and dropping it again here would lose what a
+ * plugin meant to say.
  */
+void Submit(const Record& record);
+
+/** Renders a record in the host's format, without the trailing newline. */
 std::string Encode(const Record& record);
 
 /**
- * FormatTimestamp renders a time the way the host's parser demands: exactly six
- * fractional digits, and an offset written either as "Z" or with a colon. A
- * timestamp in any other shape makes the host reject the whole line and fall
- * back to reporting it as unparsed text at its own level, so this is a contract
- * and not a preference.
+ * Exactly six fractional digits, and an offset written either as "Z" or with a
+ * colon. A timestamp in any other shape makes the host reject the whole line
+ * and report it as unparsed text at its own level.
  */
 std::string FormatTimestamp(std::chrono::system_clock::time_point tp);
 
-/** The level's name as the host spells it. */
 std::string_view LevelName(Level level);
 
 }  // namespace go_plugin::log

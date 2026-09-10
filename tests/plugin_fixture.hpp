@@ -14,7 +14,10 @@
 
 namespace go_plugin::test {
 
-/** Echoes its request, which is all a test needs a served method to do. */
+/**
+ * gRPC starts a server only if a registered service has a synchronous method,
+ * and a plugin with no services could not answer its host either.
+ */
 class ProbeService final : public Probe::Service {
 public:
     grpc::Status Ping(grpc::ServerContext*, const PingRequest* request, PingReply* reply) override {
@@ -23,12 +26,7 @@ public:
     }
 };
 
-/**
- * PluginFixture configures a server the way a host configures one — cookie in
- * the environment, a service registered, the handshake captured — and takes
- * the environment back down afterwards so no test can leak a cookie or a port
- * range into the next.
- */
+/** Takes the environment back down so no test leaks a cookie into the next. */
 class PluginFixture : public ::testing::Test {
 protected:
     static constexpr const char* kCookieKey = "GO_PLUGIN_TEST_COOKIE";
@@ -55,7 +53,6 @@ protected:
     static void SetEnv(const char* key, const char* value) { ::setenv(key, value, 1); }
     static void UnsetEnv(const char* key) { ::unsetenv(key); }
 
-    /** Starts a server from the current config. Returns whether it came up. */
     bool Start(std::string* error = nullptr) {
         std::string ignored;
         server_ = std::make_unique<go_plugin::PluginServer>(config_);
@@ -65,10 +62,8 @@ protected:
 
     go_plugin::PluginServer& server() { return *server_; }
 
-    /** The handshake line, newline included, as the host would read it. */
     std::string handshake() const { return handshake_.str(); }
 
-    /** The address the handshake advertises. */
     std::string target() const { return "127.0.0.1:" + std::to_string(server_->port()); }
 
     go_plugin::ServeConfig config_;

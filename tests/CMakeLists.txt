@@ -1,9 +1,6 @@
 find_package(GTest CONFIG REQUIRED)
 
-# ── the service the tests serve ───────────────────────────────────────────────
-# gRPC refuses to start a server with no synchronous method to answer, and a
-# plugin with no services could not answer its host either, so the tests serve
-# a real one. Generated into the build tree, never into the source tree.
+# Generated into the build tree, never into the source tree.
 set(PROBE_PROTO "${CMAKE_CURRENT_SOURCE_DIR}/proto/probe.proto")
 set(PROBE_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen")
 
@@ -32,15 +29,12 @@ add_library(probe_proto STATIC
 target_link_libraries(probe_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
 target_include_directories(probe_proto PUBLIC "${PROBE_OUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 
-# ── test_handshake (the line the host reads) ──────────────────────────────────
 add_executable(test_handshake test_handshake.cpp)
 target_link_libraries(test_handshake PRIVATE go_plugin probe_proto GTest::gtest GTest::gtest_main)
 
-# ── test_server (starts a real gRPC server in-process) ───────────────────────
 add_executable(test_server test_server.cpp)
 target_link_libraries(test_server PRIVATE go_plugin probe_proto GTest::gtest GTest::gtest_main)
 
-# ── test_log (encoding and the host's timestamp contract) ────────────────────
 add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE go_plugin GTest::gtest GTest::gtest_main)
 
