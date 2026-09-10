@@ -123,6 +123,25 @@ TEST(Log, TakesFieldsAsBracedPairs) {
     EXPECT_NE(line.find(R"("path":"/tmp/pipe")"), std::string::npos) << line;
 }
 
+// A backend hands over records its own library already decided to emit. Gating
+// them again here would silently drop what a plugin meant to say, which is the
+// failure this format exists to prevent.
+TEST(Log, DoesNotRegateARecordFromABackend) {
+    Capture capture;
+    go_plugin::log::SetLevel(Level::Error);
+
+    Record record;
+    record.level = Level::Debug;
+    record.message = "a backend already let this through";
+    record.timestamp = std::chrono::system_clock::now();
+    go_plugin::log::Submit(record);
+
+    go_plugin::log::SetLevel(Level::Info);
+
+    ASSERT_EQ(capture.lines().size(), 1u);
+    EXPECT_NE(capture.lines().front().find(R"("@level":"debug")"), std::string::npos);
+}
+
 TEST(Log, DropsRecordsBelowTheLevel) {
     Capture capture;
     go_plugin::log::SetLevel(Level::Warn);

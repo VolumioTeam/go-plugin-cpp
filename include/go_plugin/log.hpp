@@ -67,7 +67,7 @@ using Sink = std::function<void(const Record&)>;
 /** Replaces the sink. Pass nullptr to restore the default. */
 void SetSink(Sink sink);
 
-/** Records below this level are dropped before they are encoded. Info by default. */
+/** Records written through Write below this level are dropped. Info by default. */
 void SetLevel(Level min);
 Level GetLevel();
 bool Enabled(Level level);
@@ -76,10 +76,15 @@ bool Enabled(Level level);
 void Write(Level level, std::string_view message, std::initializer_list<Field> fields = {});
 
 /**
- * Submit hands an already-assembled record to the sink, level filter included.
- * This is the seam a backend adapter sits on: a logging library that already
- * knows the time, severity and origin of a line reports it through here rather
- * than losing them to a second timestamp.
+ * Submit hands an already-assembled record to the sink. This is the seam a
+ * backend adapter sits on: a logging library that already knows the time,
+ * severity and origin of a line reports it through here rather than losing them
+ * to a second timestamp.
+ *
+ * The level set here is deliberately not applied. A record reaching Submit came
+ * from a library that has already decided to emit it, under its own thresholds,
+ * and dropping it a second time here would lose exactly what a plugin meant to
+ * say — which is the whole reason this format exists. SetLevel governs Write.
  */
 void Submit(const Record& record);
 

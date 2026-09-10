@@ -180,8 +180,6 @@ Level GetLevel() { return static_cast<Level>(g_level.load(std::memory_order_rela
 bool Enabled(Level level) { return static_cast<int>(level) >= g_level.load(std::memory_order_relaxed); }
 
 void Submit(const Record& record) {
-    if (!Enabled(record.level)) return;
-
     Sink sink;
     {
         std::lock_guard<std::mutex> lock(SinkMutex());
