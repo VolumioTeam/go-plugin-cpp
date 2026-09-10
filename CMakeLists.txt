@@ -9,29 +9,17 @@ find_package(gRPC CONFIG REQUIRED)
 find_package(Protobuf CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
-set(GO_PLUGIN_LOG_ABSL "AUTO" CACHE STRING "Build the Abseil logging bridge (ON/OFF/AUTO)")
-set_property(CACHE GO_PLUGIN_LOG_ABSL PROPERTY STRINGS ON OFF AUTO)
+# Explicit, not detected: the installed package's dependencies should not vary
+# with whatever happened to be present when it was built.
+option(GO_PLUGIN_LOG_ABSL "Build the Abseil logging bridge" OFF)
 
 if(GO_PLUGIN_LOG_ABSL)
-    if(GO_PLUGIN_LOG_ABSL STREQUAL "AUTO")
-        find_package(absl CONFIG QUIET)
-        if(absl_FOUND)
-            set(GO_PLUGIN_LOG_ABSL ON)
-        else()
-            set(GO_PLUGIN_LOG_ABSL OFF)
-            message(STATUS "go-plugin-cpp: Abseil not found, skipping the Abseil logging bridge")
-        endif()
-    else()
-        find_package(absl CONFIG REQUIRED)
-    endif()
+    find_package(absl CONFIG REQUIRED)
 endif()
 
 add_subdirectory(src)
 
-# Off unless asked for: gtest is a manifest feature, so a consumer that only
-# wants the library never installs it. Build them with
-#   vcpkg install --x-feature=tests
-#   cmake -B build -DGO_PLUGIN_BUILD_TESTS=ON
+# gtest is a manifest feature, so a consumer of the library never installs it.
 option(GO_PLUGIN_BUILD_TESTS "Build tests" OFF)
 if(GO_PLUGIN_BUILD_TESTS)
     find_package(GTest CONFIG REQUIRED)
@@ -39,9 +27,8 @@ if(GO_PLUGIN_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-# Off unless asked for: the example is the only thing here that generates
-# protobuf code, so with it off the library needs no protoc and no
-# grpc_cpp_plugin to build.
+# The only thing here that generates protobuf code, so with it off the library
+# needs neither protoc nor grpc_cpp_plugin.
 option(GO_PLUGIN_BUILD_EXAMPLES "Build examples" OFF)
 if(GO_PLUGIN_BUILD_EXAMPLES)
     add_subdirectory(example)

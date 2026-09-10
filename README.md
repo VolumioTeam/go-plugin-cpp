@@ -42,9 +42,9 @@ go_plugin::log::Error("write failed", {{"error", strerror(errno)}});
 A plugin that already logs through a library keeps its call sites and installs a bridge. Each backend is a separate
 target, so a plugin links only the one it uses:
 
-| Backend | Target | Header | Install with |
-|---------|--------|--------|--------------|
-| Abseil (`LOG`/`VLOG`) | `go_plugin::go_plugin_log_absl` | `go_plugin/log_absl.hpp` | `go_plugin::log::InstallAbslBridge()` |
+| Backend | Target | Header | Build with | Install with |
+|---------|--------|--------|------------|--------------|
+| Abseil (`LOG`/`VLOG`) | `go_plugin::go_plugin_log_absl` | `go_plugin/log_absl.hpp` | `-DGO_PLUGIN_LOG_ABSL=ON` | `go_plugin::log::InstallAbslBridge()` |
 
 ```cpp
 absl::InitializeLog();
@@ -95,6 +95,7 @@ cmake -B build \
       -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
       -DCMAKE_BUILD_TYPE=Release \
       -DVCPKG_MANIFEST_FEATURES=tests \
+      -DGO_PLUGIN_LOG_ABSL=ON \
       -DGO_PLUGIN_BUILD_TESTS=ON \
       -DGO_PLUGIN_BUILD_EXAMPLES=ON
 cmake --build build -j

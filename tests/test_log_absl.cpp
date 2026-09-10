@@ -37,8 +37,7 @@ protected:
 
 }  // namespace
 
-// Abseil files everything it emits at info or above; a plugin's own severity is
-// exactly what was being lost, so this is the point of the bridge.
+// A plugin's own severity is what was being lost, so this is the point.
 TEST_F(AbslBridge, KeepsTheSeverity) {
     LOG(INFO) << "an info line";
     LOG(WARNING) << "a warning line";
@@ -50,8 +49,7 @@ TEST_F(AbslBridge, KeepsTheSeverity) {
     EXPECT_NE(Lines()[2].find(R"("@level":"error")"), std::string::npos) << Lines()[2];
 }
 
-// Abseil has no debug or trace severity: they exist only as VLOG verbosities,
-// so the bridge is the only thing that can tell them apart.
+// Abseil has no debug or trace severity; only VLOG verbosities.
 TEST_F(AbslBridge, MapsVerbosityOntoDebugAndTrace) {
     VLOG(1) << "a verbose line";
     VLOG(3) << "a very verbose line";

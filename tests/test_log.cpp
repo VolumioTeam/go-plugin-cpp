@@ -1,4 +1,6 @@
 #include <chrono>
+#include <clocale>
+#include <limits>
 #include <regex>
 #include <string>
 #include <vector>
@@ -13,8 +15,6 @@ using go_plugin::log::Record;
 
 namespace {
 
-// Capture holds every record a test produces, and restores the default sink so
-// one test cannot leak its sink into the next.
 class Capture {
 public:
     Capture() {
@@ -30,11 +30,8 @@ private:
 
 }  // namespace
 
-// The host parses @timestamp with Go's "2006-01-02T15:04:05.000000Z07:00",
-// which demands exactly six fractional digits and an offset written as "Z" or
-// with a colon. Anything else and the host discards the parse and reports the
-// whole raw line at its own level — the failure is silent and looks exactly
-// like the bug this format exists to fix.
+// A shape the host cannot parse makes it discard the parse and report the raw
+// line at its own level, so the failure looks like the bug this format fixes.
 TEST(Log, TimestampMatchesTheHostsLayout) {
     const std::regex layout(R"(^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}(Z|[+-]\d{2}:\d{2})$)");
 
@@ -47,7 +44,6 @@ TEST(Log, TimestampMatchesTheHostsLayout) {
 }
 
 TEST(Log, TimestampKeepsSixFractionalDigits) {
-    // A whole second must still render six digits rather than being trimmed.
     const auto whole = std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());
     const std::string stamp = go_plugin::log::FormatTimestamp(whole);
     EXPECT_NE(stamp.find(".000000"), std::string::npos) << stamp;
@@ -83,9 +79,8 @@ TEST(Log, LevelNamesAreTheOnesTheHostAccepts) {
     }
 }
 
-// The host reads standard error one line at a time, so a newline that reached
-// the output unescaped would split one record into two and leave the remainder
-// unparseable.
+// The host reads a line at a time, so an unescaped newline would split one
+// record into two.
 TEST(Log, EscapesWhatWouldBreakTheLine) {
     Capture capture;
     go_plugin::log::Info("first\nsecond\ttabbed \"quoted\" back\\slash",
@@ -111,8 +106,6 @@ TEST(Log, NumbersAndBoolsAreJsonLiterals) {
     EXPECT_NE(line.find(R"("ratio":0.5)"), std::string::npos) << line;
 }
 
-// The shape the README hands a caller: fields written inline, no Field spelled
-// out and no vector built.
 TEST(Log, TakesFieldsAsBracedPairs) {
     Capture capture;
     go_plugin::log::Info("sink opened", {{"rate", 48000}, {"path", std::string("/tmp/pipe")}});
@@ -123,9 +116,32 @@ TEST(Log, TakesFieldsAsBracedPairs) {
     EXPECT_NE(line.find(R"("path":"/tmp/pipe")"), std::string::npos) << line;
 }
 
-// A backend hands over records its own library already decided to emit. Gating
-// them again here would silently drop what a plugin meant to say, which is the
-// failure this format exists to prevent.
+
+// printf's %g follows the locale, which would write "0,5" and be rejected.
+TEST(Log, WritesDoublesTheSameInAnyLocale) {
+    Capture capture;
+    const char* previous = std::setlocale(LC_NUMERIC, "de_DE.UTF-8");
+    go_plugin::log::Info("readings", {Field("ratio", 0.5)});
+    if (previous != nullptr) std::setlocale(LC_NUMERIC, previous);
+
+    ASSERT_EQ(capture.lines().size(), 1u);
+    EXPECT_NE(capture.lines().front().find(R"("ratio":0.5)"), std::string::npos)
+        << capture.lines().front();
+}
+
+// JSON has no NaN or infinity.
+TEST(Log, QuotesNonFiniteDoubles) {
+    Capture capture;
+    go_plugin::log::Info("a", {Field("v", std::numeric_limits<double>::quiet_NaN())});
+    go_plugin::log::Info("b", {Field("v", std::numeric_limits<double>::infinity())});
+
+    ASSERT_EQ(capture.lines().size(), 2u);
+    EXPECT_NE(capture.lines()[0].find(R"("v":"NaN")"), std::string::npos) << capture.lines()[0];
+    EXPECT_NE(capture.lines()[1].find(R"("v":"+Inf")"), std::string::npos) << capture.lines()[1];
+}
+
+// The backend's library already decided to emit these; gating them again would
+// drop what a plugin meant to say.
 TEST(Log, DoesNotRegateARecordFromABackend) {
     Capture capture;
     go_plugin::log::SetLevel(Level::Error);

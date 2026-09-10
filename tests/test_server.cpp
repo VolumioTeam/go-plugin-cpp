@@ -13,8 +13,6 @@ namespace {
 
 using Server = PluginFixture;
 
-// ── lifecycle ─────────────────────────────────────────────────────────────────
-
 TEST_F(Server, ReportsNoPortUntilStarted) {
     go_plugin::PluginServer server(config_);
     EXPECT_EQ(server.port(), 0);
@@ -29,11 +27,7 @@ TEST_F(Server, StartsAndShutsDown) {
     server().Wait();
 }
 
-// ── the address the handshake advertises actually serves ─────────────────────
-
-// The handshake exists so the host can reach the plugin, so the test that
-// matters is whether a call placed against the advertised address is answered —
-// not merely whether a socket accepts a connection.
+// A socket accepting a connection is not the same as the plugin answering.
 TEST_F(Server, AnswersACallOnTheAdvertisedAddress) {
     std::string error;
     ASSERT_TRUE(Start(&error)) << error;
@@ -46,14 +40,13 @@ TEST_F(Server, AnswersACallOnTheAdvertisedAddress) {
     request.set_text("hello");
 
     grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
     PingReply reply;
     const grpc::Status status = stub->Ping(&context, request, &reply);
 
     ASSERT_TRUE(status.ok()) << status.error_message();
     EXPECT_EQ(reply.text(), "hello");
 }
-
-// ── Serve() convenience function ─────────────────────────────────────────────
 
 TEST_F(Server, ServeRefusesTheWrongCookie) {
     UnsetEnv(kCookieKey);
@@ -62,8 +55,6 @@ TEST_F(Server, ServeRefusesTheWrongCookie) {
     EXPECT_FALSE(result.ok);
     EXPECT_FALSE(result.error.empty());
 }
-
-// ── concurrent shutdown ───────────────────────────────────────────────────────
 
 TEST_F(Server, WaitUnblocksAfterShutdown) {
     std::string error;

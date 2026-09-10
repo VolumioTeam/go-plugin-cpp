@@ -5,6 +5,13 @@ find_dependency(gRPC CONFIG REQUIRED)
 find_dependency(OpenSSL REQUIRED)
 find_dependency(Protobuf CONFIG REQUIRED)
 
+# The Abseil bridge's exported target names absl:: libraries, so they have to
+# exist by the time the export is read — a consumer that never links the bridge
+# would otherwise fail on find_package(go_plugin) alone.
+if(@GO_PLUGIN_LOG_ABSL@)
+    find_dependency(absl CONFIG REQUIRED)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/go_plugin-targets.cmake")
 
 check_required_components(go_plugin)

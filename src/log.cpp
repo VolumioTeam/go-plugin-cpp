@@ -3,8 +3,12 @@
 #include <atomic>
 #include <cerrno>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <iomanip>
+#include <locale>
+#include <sstream>
 #include <mutex>
 #include <unistd.h>
 
@@ -28,7 +32,6 @@ Sink& CurrentSink() {
     return sink;
 }
 
-/** Appends s as a JSON string body, escaping what would break the parse. */
 void AppendEscaped(std::string& out, std::string_view s) {
     for (unsigned char c : s) {
         switch (c) {
@@ -53,9 +56,8 @@ void WriteToStderr(const Record& record) {
     std::string line = Encode(record);
     line += '\n';
 
-    // One write of the whole line: the host reads standard error a line at a
-    // time, and a plugin logs from its gRPC threads and from whatever library
-    // it drives, so a line assembled in pieces would interleave with another's.
+    // One write of the whole line: a plugin logs from its gRPC threads and from
+    // whatever library it drives, and the host reads a line at a time.
     std::lock_guard<std::mutex> lock(WriteMutex());
     ssize_t written = 0;
     while (written < static_cast<ssize_t>(line.size())) {
@@ -84,9 +86,17 @@ Field::Field(std::string_view key, unsigned long long value)
     : Field(key, std::to_string(value), true) {}
 
 Field::Field(std::string_view key, double value) : Field(key, std::string(), true) {
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%.17g", value);
-    value_ = buf;
+    // printf would write "0,5" under a comma-decimal locale, and "nan" for a
+    // NaN — either makes the host reject the line.
+    if (!std::isfinite(value)) {
+        value_ = std::isnan(value) ? "\"NaN\"" : (value > 0 ? "\"+Inf\"" : "\"-Inf\"");
+        return;
+    }
+
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::setprecision(17) << value;
+    value_ = out.str();
 }
 
 std::string_view LevelName(Level level) {
@@ -103,8 +113,8 @@ std::string_view LevelName(Level level) {
 std::string FormatTimestamp(std::chrono::system_clock::time_point tp) {
     using namespace std::chrono;
 
-    // floor, not a cast: a cast truncates towards zero, which would hand back a
-    // negative sub-second remainder for a clock still set before the epoch.
+    // floor, not a cast: a cast truncates towards zero, handing back a negative
+    // remainder for a clock still set before the epoch.
     const auto secs = floor<seconds>(tp);
     const auto micros = duration_cast<microseconds>(tp - secs).count();
 
