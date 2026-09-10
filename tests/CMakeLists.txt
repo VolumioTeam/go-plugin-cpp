@@ -40,6 +40,19 @@ target_link_libraries(test_handshake PRIVATE go_plugin probe_proto GTest::gtest 
 add_executable(test_server test_server.cpp)
 target_link_libraries(test_server PRIVATE go_plugin probe_proto GTest::gtest GTest::gtest_main)
 
+# ── test_log (encoding and the host's timestamp contract) ────────────────────
+add_executable(test_log test_log.cpp)
+target_link_libraries(test_log PRIVATE go_plugin GTest::gtest GTest::gtest_main)
+
+if(GO_PLUGIN_LOG_ABSL)
+    add_executable(test_log_absl test_log_absl.cpp)
+    target_link_libraries(test_log_absl PRIVATE go_plugin_log_absl GTest::gtest GTest::gtest_main)
+endif()
+
 include(GoogleTest)
 gtest_discover_tests(test_handshake)
 gtest_discover_tests(test_server)
+gtest_discover_tests(test_log)
+if(GO_PLUGIN_LOG_ABSL)
+    gtest_discover_tests(test_log_absl)
+endif()
