@@ -14,13 +14,11 @@
 #include <string>
 #include <vector>
 
-// POSIX socket headers for port probing
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <grpcpp/ext/proto_server_reflection_plugin.h>
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 
@@ -135,7 +133,6 @@ bool PluginServer::Start(std::string *out_error) {
 
   // ── 3. Build gRPC server ─────────────────────────────────────────────
   grpc::EnableDefaultHealthCheckService(true);
-  grpc::reflection::InitProtoReflectionServerBuilderPlugin();
 
   grpc::ServerBuilder builder;
   int selected_port = 0;

@@ -1,135 +1,87 @@
-#include <gtest/gtest.h>
-
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
-#include <sstream>
 #include <string>
 #include <thread>
 
 #include <grpcpp/grpcpp.h>
+#include <gtest/gtest.h>
 
-#include "go_plugin/server.hpp"
+#include "plugin_fixture.hpp"
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+namespace go_plugin::test {
+namespace {
 
-static void SetEnv(const char *k, const char *v) { ::setenv(k, v, 1); }
-static void UnsetEnv(const char *k) { ::unsetenv(k); }
+using Server = PluginFixture;
 
-// ── basic server lifecycle ────────────────────────────────────────────────────
+// ── lifecycle ─────────────────────────────────────────────────────────────────
 
-TEST(ServerTest, StartAndShutdown) {
-  SetEnv("SRV_MAGIC", "srv_val");
-  std::ostringstream out;
-
-  go_plugin::ServeConfig cfg;
-  cfg.handshake.magic_cookie_key = "SRV_MAGIC";
-  cfg.handshake.magic_cookie_value = "srv_val";
-  cfg.output = &out;
-
-  go_plugin::PluginServer server(cfg);
-  std::string err;
-  ASSERT_TRUE(server.Start(&err)) << err;
-  EXPECT_GT(server.port(), 0);
-
-  server.Shutdown();
-  server.Wait();
-  UnsetEnv("SRV_MAGIC");
+TEST_F(Server, ReportsNoPortUntilStarted) {
+    go_plugin::PluginServer server(config_);
+    EXPECT_EQ(server.port(), 0);
 }
 
-TEST(ServerTest, PortIsPositiveAfterStart) {
-  SetEnv("SRV_PORT_MAGIC", "portval");
-  std::ostringstream out;
+TEST_F(Server, StartsAndShutsDown) {
+    std::string error;
+    ASSERT_TRUE(Start(&error)) << error;
+    EXPECT_GT(server().port(), 0);
 
-  go_plugin::ServeConfig cfg;
-  cfg.handshake.magic_cookie_key = "SRV_PORT_MAGIC";
-  cfg.handshake.magic_cookie_value = "portval";
-  cfg.output = &out;
-
-  go_plugin::PluginServer server(cfg);
-  EXPECT_EQ(server.port(), 0); // before Start()
-
-  std::string err;
-  ASSERT_TRUE(server.Start(&err)) << err;
-  EXPECT_GT(server.port(), 0); // after Start()
-
-  server.Shutdown();
-  server.Wait();
-  UnsetEnv("SRV_PORT_MAGIC");
+    server().Shutdown();
+    server().Wait();
 }
 
-// ── connectivity check ────────────────────────────────────────────────────────
+// ── the address the handshake advertises actually serves ─────────────────────
 
-TEST(ServerTest, ChannelConnects) {
-  SetEnv("SRV_HEALTH_MAGIC", "health_val");
-  std::ostringstream out;
+// The handshake exists so the host can reach the plugin, so the test that
+// matters is whether a call placed against the advertised address is answered —
+// not merely whether a socket accepts a connection.
+TEST_F(Server, AnswersACallOnTheAdvertisedAddress) {
+    std::string error;
+    ASSERT_TRUE(Start(&error)) << error;
 
-  go_plugin::ServeConfig cfg;
-  cfg.handshake.magic_cookie_key = "SRV_HEALTH_MAGIC";
-  cfg.handshake.magic_cookie_value = "health_val";
-  cfg.output = &out;
+    auto channel = grpc::CreateChannel(target(), grpc::InsecureChannelCredentials());
+    ASSERT_TRUE(channel->WaitForConnected(std::chrono::system_clock::now() + std::chrono::seconds(5)));
 
-  go_plugin::PluginServer server(cfg);
-  std::string err;
-  ASSERT_TRUE(server.Start(&err)) << err;
+    auto stub = Probe::NewStub(channel);
+    PingRequest request;
+    request.set_text("hello");
 
-  std::string target = "127.0.0.1:" + std::to_string(server.port());
-  auto channel = grpc::CreateChannel(target, grpc::InsecureChannelCredentials());
+    grpc::ClientContext context;
+    PingReply reply;
+    const grpc::Status status = stub->Ping(&context, request, &reply);
 
-  // Wait up to 5 s for the channel to reach READY state.
-  bool connected = channel->WaitForConnected(
-      std::chrono::system_clock::now() + std::chrono::seconds(5));
-  EXPECT_TRUE(connected);
-
-  server.Shutdown();
-  server.Wait();
-  UnsetEnv("SRV_HEALTH_MAGIC");
+    ASSERT_TRUE(status.ok()) << status.error_message();
+    EXPECT_EQ(reply.text(), "hello");
 }
 
 // ── Serve() convenience function ─────────────────────────────────────────────
 
-TEST(ServerTest, ServeFailsWithWrongCookie) {
-  UnsetEnv("SRV_WRONG_MAGIC");
-  std::ostringstream out;
+TEST_F(Server, ServeRefusesTheWrongCookie) {
+    UnsetEnv(kCookieKey);
 
-  go_plugin::ServeConfig cfg;
-  cfg.handshake.magic_cookie_key = "SRV_WRONG_MAGIC";
-  cfg.handshake.magic_cookie_value = "expected";
-  cfg.output = &out;
-
-  // Serve() should return immediately with ok=false (no blocking Wait).
-  auto result = go_plugin::Serve(cfg);
-  EXPECT_FALSE(result.ok);
-  EXPECT_FALSE(result.error.empty());
+    const auto result = go_plugin::Serve(config_);
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(result.error.empty());
 }
 
 // ── concurrent shutdown ───────────────────────────────────────────────────────
 
-TEST(ServerTest, WaitUnblocksAfterShutdown) {
-  SetEnv("SRV_CONC_MAGIC", "conc_val");
-  std::ostringstream out;
+TEST_F(Server, WaitUnblocksAfterShutdown) {
+    std::string error;
+    ASSERT_TRUE(Start(&error)) << error;
 
-  go_plugin::ServeConfig cfg;
-  cfg.handshake.magic_cookie_key = "SRV_CONC_MAGIC";
-  cfg.handshake.magic_cookie_value = "conc_val";
-  cfg.output = &out;
+    std::atomic<bool> wait_returned{false};
+    std::thread waiter([&] {
+        server().Wait();
+        wait_returned = true;
+    });
 
-  go_plugin::PluginServer server(cfg);
-  std::string err;
-  ASSERT_TRUE(server.Start(&err)) << err;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(wait_returned) << "Wait must block while the server is up";
 
-  std::atomic<bool> wait_returned{false};
-  std::thread t([&] {
-    server.Wait();
-    wait_returned = true;
-  });
-
-  // Wait() should be blocking now
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  EXPECT_FALSE(wait_returned);
-
-  server.Shutdown();
-  t.join();
-  EXPECT_TRUE(wait_returned);
-  UnsetEnv("SRV_CONC_MAGIC");
+    server().Shutdown();
+    waiter.join();
+    EXPECT_TRUE(wait_returned);
 }
+
+}  // namespace
+}  // namespace go_plugin::test
