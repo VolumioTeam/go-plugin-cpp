@@ -1,12 +1,44 @@
 find_package(GTest CONFIG REQUIRED)
 
-# ── test_handshake (no gRPC server, purely logical tests) ─────────────────────
+# ── the service the tests serve ───────────────────────────────────────────────
+# gRPC refuses to start a server with no synchronous method to answer, and a
+# plugin with no services could not answer its host either, so the tests serve
+# a real one. Generated into the build tree, never into the source tree.
+set(PROBE_PROTO "${CMAKE_CURRENT_SOURCE_DIR}/proto/probe.proto")
+set(PROBE_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/gen")
+
+file(MAKE_DIRECTORY "${PROBE_OUT_DIR}")
+
+add_custom_command(
+    OUTPUT
+        "${PROBE_OUT_DIR}/probe.pb.cc" "${PROBE_OUT_DIR}/probe.pb.h"
+        "${PROBE_OUT_DIR}/probe.grpc.pb.cc" "${PROBE_OUT_DIR}/probe.grpc.pb.h"
+    COMMAND protobuf::protoc
+    ARGS
+        --proto_path "${CMAKE_CURRENT_SOURCE_DIR}/proto"
+        --cpp_out    "${PROBE_OUT_DIR}"
+        --grpc_out   "${PROBE_OUT_DIR}"
+        --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+        "${PROBE_PROTO}"
+    DEPENDS "${PROBE_PROTO}" protobuf::protoc gRPC::grpc_cpp_plugin
+    COMMENT "Generating the tests' Probe service"
+    VERBATIM
+)
+
+add_library(probe_proto STATIC
+    "${PROBE_OUT_DIR}/probe.pb.cc"
+    "${PROBE_OUT_DIR}/probe.grpc.pb.cc"
+)
+target_link_libraries(probe_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+target_include_directories(probe_proto PUBLIC "${PROBE_OUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# ── test_handshake (the line the host reads) ──────────────────────────────────
 add_executable(test_handshake test_handshake.cpp)
-target_link_libraries(test_handshake PRIVATE go_plugin GTest::gtest GTest::gtest_main)
+target_link_libraries(test_handshake PRIVATE go_plugin probe_proto GTest::gtest GTest::gtest_main)
 
 # ── test_server (starts a real gRPC server in-process) ───────────────────────
 add_executable(test_server test_server.cpp)
-target_link_libraries(test_server PRIVATE go_plugin GTest::gtest GTest::gtest_main)
+target_link_libraries(test_server PRIVATE go_plugin probe_proto GTest::gtest GTest::gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(test_handshake)

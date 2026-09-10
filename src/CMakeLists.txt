@@ -12,7 +12,6 @@ target_include_directories(go_plugin
 target_link_libraries(go_plugin
     PUBLIC
         gRPC::grpc++
-        gRPC::grpc++_reflection
         protobuf::libprotobuf
         OpenSSL::SSL
         OpenSSL::Crypto

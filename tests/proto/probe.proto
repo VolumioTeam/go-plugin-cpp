@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package go_plugin.test;
+
+// Probe is the service the tests serve. gRPC will not start a server that has
+// no synchronous method to answer, and neither could a plugin with no services,
+// so a test that starts a server registers this one.
+service Probe {
+  rpc Ping (PingRequest) returns (PingReply);
+}
+
+message PingRequest {
+  string text = 1;
+}
+
+message PingReply {
+  string text = 1;
+}
