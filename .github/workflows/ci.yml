@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       
       - name: Install dependencies
         run: |
@@ -20,12 +20,12 @@ jobs:
           sudo apt-get install -y ninja-build pkg-config protoc-gen-go protoc-gen-go-grpc
       
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: '1.26'
       
       - name: Restore vcpkg from cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/vcpkg
           key: vcpkg-${{ runner.os }}-${{ hashFiles('**/vcpkg.json') }}
