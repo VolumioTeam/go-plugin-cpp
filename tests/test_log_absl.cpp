@@ -72,3 +72,27 @@ TEST_F(AbslBridge, CarriesTheCaller) {
     ASSERT_EQ(Lines().size(), 1u);
     EXPECT_NE(Lines()[0].find(R"("caller":"test_log_absl.cpp:)"), std::string::npos) << Lines()[0];
 }
+
+// One level moves Abseil as a whole: its VLOG verbosities by the bridge's own
+// mapping of debug and trace, and its severities.
+TEST_F(AbslBridge, SetAbslLevelDecidesWhatAbseilLogs) {
+    go_plugin::log::SetAbslLevel(go_plugin::log::Level::Debug);
+    VLOG(1) << "debug line";
+    VLOG(2) << "trace line";
+    ASSERT_EQ(Lines().size(), 1u);
+    EXPECT_NE(Lines()[0].find("debug line"), std::string::npos);
+
+    Lines().clear();
+    go_plugin::log::SetAbslLevel(go_plugin::log::Level::Trace);
+    VLOG(2) << "trace line";
+    EXPECT_EQ(Lines().size(), 1u);
+
+    Lines().clear();
+    go_plugin::log::SetAbslLevel(go_plugin::log::Level::Warn);
+    VLOG(1) << "debug line";
+    LOG(INFO) << "info line";
+    LOG(WARNING) << "warning line";
+    ASSERT_EQ(Lines().size(), 1u);
+    EXPECT_NE(Lines()[0].find("warning line"), std::string::npos);
+    EXPECT_EQ(go_plugin::log::GetLevel(), go_plugin::log::Level::Warn);
+}

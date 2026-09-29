@@ -1,5 +1,6 @@
 #include "go_plugin/log_absl.hpp"
 
+#include <atomic>
 #include <mutex>
 #include <string>
 
@@ -14,6 +15,8 @@
 
 namespace go_plugin::log {
 namespace {
+
+std::atomic<int> g_trace_from_verbosity{AbslBridgeOptions{}.trace_from_verbosity};
 
 Level LevelFor(const absl::LogEntry& entry, const AbslBridgeOptions& options) {
     // A VLOG is filed at info severity; its verbosity is the only thing that
@@ -64,6 +67,7 @@ private:
 void InstallAbslBridge(const AbslBridgeOptions& options) {
     static std::once_flag once;
     std::call_once(once, [&options] {
+        g_trace_from_verbosity.store(options.trace_from_verbosity, std::memory_order_relaxed);
         // Never destroyed: Abseil holds the pointer for the life of the process
         // and a LOG(FATAL) unwinds nothing.
         static Bridge bridge(options);
@@ -73,6 +77,23 @@ void InstallAbslBridge(const AbslBridgeOptions& options) {
             absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfinity);
         }
     });
+}
+
+void SetAbslLevel(Level min) {
+    SetLevel(min);
+
+    const int trace_from = g_trace_from_verbosity.load(std::memory_order_relaxed);
+    int verbosity = 0;
+    absl::LogSeverityAtLeast severity = absl::LogSeverityAtLeast::kInfo;
+    switch (min) {
+    case Level::Trace: verbosity = trace_from; break;
+    case Level::Debug: verbosity = trace_from - 1; break;
+    case Level::Info: break;
+    case Level::Warn: severity = absl::LogSeverityAtLeast::kWarning; break;
+    case Level::Error: severity = absl::LogSeverityAtLeast::kError; break;
+    }
+    absl::SetGlobalVLogLevel(verbosity);
+    absl::SetMinLogLevel(severity);
 }
 
 }  // namespace go_plugin::log
