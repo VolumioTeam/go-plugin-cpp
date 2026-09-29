@@ -54,6 +54,10 @@ go_plugin::log::InstallAbslBridge();   // LOG(WARNING) now reaches the host as a
 Abseil has no debug or trace severity of its own — they exist only as `VLOG` verbosities — so the bridge maps `VLOG(1)`
 to debug and `VLOG(2)` and above to trace, and it stops Abseil writing its own copy of each line to standard error.
 
+`go_plugin::log::SetAbslLevel(level)` sets the least severe level a plugin logs at, through Abseil as much as through
+`Write`: Abseil's minimum severity, and the `VLOG` verbosity that the same mapping gives debug and trace. It is for a
+plugin whose host moves its level while it runs.
+
 To add another backend, translate its records into `go_plugin::log::Submit` and add a target beside the Abseil one;
 nothing in the core changes.
 
