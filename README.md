@@ -20,6 +20,9 @@ This library handles:
   configured automatically.
 - **Handshake line output** – writes the correctly formatted line to stdout so the host can connect.
 - **Health-check service** – the built-in gRPC health-check service is registered automatically.
+- **Stopping on request** – go-plugin's controller is served, so a host asking the plugin to stop shuts the server
+  down and returns `Wait()`, letting `main` unwind instead of being killed after the host's grace period.
+- **Parent-death watch** – if the host process dies without asking, the server shuts down on its own.
 - **Logging the host can read** – see below.
 
 ## Logging

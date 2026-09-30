@@ -4,6 +4,7 @@
 #include <thread>
 
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/impl/client_unary_call.h>
 #include <gtest/gtest.h>
 
 #include "plugin_fixture.hpp"
@@ -72,6 +73,40 @@ TEST_F(Server, WaitUnblocksAfterShutdown) {
     server().Shutdown();
     waiter.join();
     EXPECT_TRUE(wait_returned);
+}
+
+// The host asks a plugin to stop through go-plugin's controller, and the
+// plugin's Wait() returns without anything else calling Shutdown().
+TEST_F(Server, StopsWhenTheHostAsks) {
+    std::string error;
+    ASSERT_TRUE(Start(&error)) << error;
+
+    std::atomic<bool> wait_returned{false};
+    std::thread waiter([&] {
+        server().Wait();
+        wait_returned = true;
+    });
+
+    auto channel = grpc::CreateChannel(target(), grpc::InsecureChannelCredentials());
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
+    grpc::Slice empty;
+    grpc::ByteBuffer request(&empty, 1);
+    grpc::ByteBuffer reply;
+    grpc::Status status = grpc::internal::BlockingUnaryCall<grpc::ByteBuffer, grpc::ByteBuffer>(
+        channel.get(),
+        grpc::internal::RpcMethod("/plugin.GRPCController/Shutdown", grpc::internal::RpcMethod::NORMAL_RPC),
+        &context, request, &reply);
+    EXPECT_TRUE(status.ok()) << status.error_message();
+
+    for (int i = 0; i < 50 && !wait_returned; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    EXPECT_TRUE(wait_returned) << "Wait must return once the host asks the plugin to stop";
+    if (!wait_returned) {
+        server().Shutdown();
+    }
+    waiter.join();
 }
 
 }  // namespace
