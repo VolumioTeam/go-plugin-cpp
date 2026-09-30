@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <numeric>
 #include <random>
@@ -21,10 +22,35 @@
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
+#include <grpcpp/impl/rpc_service_method.h>
+#include <grpcpp/support/method_handler.h>
 
 namespace go_plugin {
 
 namespace {
+
+// go-plugin's GRPCController: the service a host calls to ask the plugin to
+// stop. Its one method takes and returns plugin.Empty, which is zero bytes on
+// the wire, so it is served over raw byte buffers and needs no generated code.
+class ControllerService final : public grpc::Service {
+public:
+  explicit ControllerService(std::function<void()> on_shutdown) : on_shutdown_(std::move(on_shutdown)) {
+    using Handler = grpc::internal::RpcMethodHandler<ControllerService, grpc::ByteBuffer, grpc::ByteBuffer>;
+    AddMethod(new grpc::internal::RpcServiceMethod(
+        "/plugin.GRPCController/Shutdown", grpc::internal::RpcMethod::NORMAL_RPC,
+        new Handler(
+            [](ControllerService *service, grpc::ServerContext *, const grpc::ByteBuffer *, grpc::ByteBuffer *reply) {
+              grpc::Slice empty;
+              *reply = grpc::ByteBuffer(&empty, 1);
+              service->on_shutdown_();
+              return grpc::Status::OK;
+            },
+            this)));
+  }
+
+private:
+  std::function<void()> on_shutdown_;
+};
 
 bool ValidateMagicCookie(const HandshakeConfig &h) {
   const char *val = std::getenv(h.magic_cookie_key.c_str());
@@ -143,6 +169,8 @@ bool PluginServer::Start(std::string *out_error) {
   for (auto *svc : config_.services) {
     builder.RegisterService(svc);
   }
+  controller_ = std::make_unique<ControllerService>([this] { RequestShutdown(); });
+  builder.RegisterService(controller_.get());
 
   server_ = builder.BuildAndStart();
   if (!server_) {
@@ -188,6 +216,11 @@ void PluginServer::StartParentWatchdog() {
   parent_watchdog_ = std::thread([this]() {
     std::unique_lock<std::mutex> lock(watchdog_mu_);
     while (!watchdog_stop_) {
+      if (shutdown_requested_) {
+        lock.unlock();
+        Shutdown();
+        return;
+      }
       // Reparenting (parent pid changes, typically to the reaper/init) means the
       // host that launched us is gone. Drive the same Shutdown() the host would
       // have, so we don't linger as an orphan.
@@ -200,6 +233,14 @@ void PluginServer::StartParentWatchdog() {
       watchdog_cv_.wait_for(lock, std::chrono::seconds(1));
     }
   });
+}
+
+void PluginServer::RequestShutdown() {
+  {
+    std::lock_guard<std::mutex> lock(watchdog_mu_);
+    shutdown_requested_ = true;
+  }
+  watchdog_cv_.notify_all();
 }
 
 void PluginServer::StopParentWatchdog() {

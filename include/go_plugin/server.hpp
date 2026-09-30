@@ -79,8 +79,10 @@ public:
 
     /**
      * Validates the magic cookie, picks a port, starts the gRPC server,
-     * registers services and the built-in health-check service, then writes
-     * the go-plugin handshake line to the configured output stream.
+     * registers services, the built-in health-check service and go-plugin's
+     * controller, then writes the go-plugin handshake line to the configured
+     * output stream. The controller answers the host's request to stop by
+     * shutting the server down, which returns Wait().
      *
      * @param error  If non-null, receives a human-readable error message on
      *               failure.
@@ -89,8 +91,9 @@ public:
     bool Start(std::string* error = nullptr);
 
     /**
-     * Blocks until the server stops (i.e. until Shutdown() is called or the
-     * host process exits — see the parent-death watchdog started by Start()).
+     * Blocks until the server stops: Shutdown() is called, the host asks the
+     * plugin to stop, or the host process exits (see the parent-death watchdog
+     * started by Start()).
      */
     void Wait();
 
@@ -101,16 +104,22 @@ public:
     int port() const { return port_; }
 
 private:
-    // Watches for the host (parent) process disappearing. go-plugin hosts stop a
-    // plugin by killing it, but when the host itself dies unexpectedly (e.g. it
-    // is SIGKILLed) nothing signals the plugin and Wait() would block forever,
-    // orphaning the process. The watchdog detects reparenting (getppid changes)
-    // and calls Shutdown(), mirroring the Go go-plugin server's built-in
-    // orphan protection. Started by Start(), stopped by Shutdown()/destruction.
+    // Watches for the host (parent) process disappearing. When the host dies
+    // unexpectedly (e.g. it is SIGKILLed) nothing signals the plugin and Wait()
+    // would block forever, orphaning the process. The watchdog detects
+    // reparenting (getppid changes) and calls Shutdown(), mirroring the Go
+    // go-plugin server's built-in orphan protection. It also carries out the
+    // host's request to stop: the request arrives on a gRPC thread, which
+    // cannot wait for the server it runs in to shut down. Started by Start(),
+    // stopped by Shutdown()/destruction.
     void StartParentWatchdog();
     void StopParentWatchdog();
 
+    // Called by the controller when the host asks the plugin to stop.
+    void RequestShutdown();
+
     ServeConfig config_;
+    std::unique_ptr<grpc::Service> controller_;
     std::unique_ptr<grpc::Server> server_;
     int port_ = 0;
 
@@ -118,6 +127,7 @@ private:
     std::mutex watchdog_mu_;
     std::condition_variable watchdog_cv_;
     bool watchdog_stop_ = false;
+    bool shutdown_requested_ = false;
     pid_t host_pid_ = 0;
 };
 
