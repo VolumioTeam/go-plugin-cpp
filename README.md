@@ -5,17 +5,20 @@ using **gRPC** as the transport (net/RPC is not supported).
 
 ## How it works
 
-go-plugin launches a plugin as a child process and communicates via gRPC over loopback TCP. The child process (plugin)
-signals readiness by printing a single *handshake line* to stdout:
+go-plugin launches a plugin as a child process and communicates via gRPC over a Unix socket, as go-plugin's own Go
+plugins do on Linux. The child process (plugin) signals readiness by printing a single *handshake line* to stdout:
 
 ```
-CORE-PROTO|APP-PROTO|tcp|127.0.0.1:PORT|grpc|SERVER-CERT
+CORE-PROTO|APP-PROTO|unix|SOCKET-PATH|grpc|SERVER-CERT
 ```
 
 This library handles:
 
 - **Magic-cookie validation** – aborts startup if the binary is run directly rather than by a go-plugin host.
-- **Port selection** – respects `PLUGIN_MIN_PORT`/`PLUGIN_MAX_PORT` if set by the host.
+- **The socket** – created in the directory the host names in `PLUGIN_UNIX_SOCKET_DIR` (or the system's temporary
+  directory), opened to the group it names in `PLUGIN_UNIX_SOCKET_GROUP` if any, and removed when the server goes. No
+  other local process reaches it unless the directory and the group let it, unlike a loopback TCP port, which any
+  process on the machine can connect to.
 - **Auto-mTLS** – when the host sets `PLUGIN_CLIENT_CERT`, a fresh server certificate is generated and mutual TLS is
   configured automatically.
 - **Handshake line output** – writes the correctly formatted line to stdout so the host can connect.

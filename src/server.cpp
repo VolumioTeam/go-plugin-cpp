@@ -2,22 +2,20 @@
 #include "go_plugin/tls.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
-#include <numeric>
-#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#include <grp.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <grpcpp/grpcpp.h>
@@ -57,55 +55,56 @@ bool ValidateMagicCookie(const HandshakeConfig &h) {
   return val && std::string(val) == h.magic_cookie_value;
 }
 
-// Returns true if we can bind a TCP socket on 127.0.0.1:port right now.
-bool IsPortAvailable(int port) {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0)
+// Reserves a path for the plugin's socket in the directory the host made for
+// it, as go-plugin's own servers do: a file of a unique name is created and
+// removed again, since a socket can only be bound where nothing is.
+bool ReserveSocketPath(std::string *path, std::string *error) {
+  const char *dir = std::getenv("PLUGIN_UNIX_SOCKET_DIR");
+  if (!dir || !*dir)
+    dir = std::getenv("TMPDIR");
+  if (!dir || !*dir)
+    dir = "/tmp";
+
+  std::string name = std::string(dir) + "/pluginXXXXXX";
+  if (name.size() >= sizeof(sockaddr_un{}.sun_path)) {
+    *error = "socket directory " + std::string(dir) + " is too long a path for a Unix socket";
     return false;
-
-  int opt = 1;
-  ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  addr.sin_port = htons(static_cast<uint16_t>(port));
-
-  bool ok = ::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0;
+  }
+  int fd = ::mkstemp(name.data());
+  if (fd < 0) {
+    *error = "reserve a socket path in " + std::string(dir) + ": " + std::strerror(errno);
+    return false;
+  }
   ::close(fd);
-  return ok;
+  ::unlink(name.c_str());
+  *path = std::move(name);
+  return true;
 }
 
-/**
- * Returns a port in [PLUGIN_MIN_PORT, PLUGIN_MAX_PORT] that appears to be
- * available, or 0 to let the OS choose (when the env vars are absent).
- *
- * Ports are tried in a random order to reduce collision probability when
- * multiple plugin processes are started simultaneously.
- */
-int PickPort() {
-  const char *min_str = std::getenv("PLUGIN_MIN_PORT");
-  const char *max_str = std::getenv("PLUGIN_MAX_PORT");
-  if (!min_str || !max_str)
-    return 0;
-
-  int min_port = std::stoi(min_str);
-  int max_port = std::stoi(max_str);
-  if (min_port < 1 || max_port > 65535 || min_port > max_port)
-    return 0;
-
-  std::vector<int> ports(static_cast<size_t>(max_port - min_port + 1));
-  std::iota(ports.begin(), ports.end(), min_port);
-
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::shuffle(ports.begin(), ports.end(), gen);
-
-  for (int p : ports) {
-    if (IsPortAvailable(p))
-      return p;
+// Opens the socket to a group the host names, by name or number, as go-plugin's
+// own servers do.
+bool SetGroupWritable(const std::string &path, const std::string &group, std::string *error) {
+  gid_t gid;
+  const bool numeric = std::all_of(group.begin(), group.end(), [](unsigned char c) { return std::isdigit(c); });
+  if (numeric) {
+    errno = 0;
+    unsigned long long number = std::strtoull(group.c_str(), nullptr, 10);
+    if (errno != 0 || number > static_cast<gid_t>(-1)) {
+      *error = "group " + group + " is out of range";
+      return false;
+    }
+    gid = static_cast<gid_t>(number);
+  } else if (const struct group *found = ::getgrnam(group.c_str())) {
+    gid = found->gr_gid;
+  } else {
+    *error = "no group " + group;
+    return false;
   }
-  return 0; // fallback: let gRPC pick
+  if (::chown(path.c_str(), static_cast<uid_t>(-1), gid) != 0 || ::chmod(path.c_str(), 0660) != 0) {
+    *error = "open the socket to group " + group + ": " + std::strerror(errno);
+    return false;
+  }
+  return true;
 }
 
 } // namespace
@@ -120,6 +119,8 @@ PluginServer::~PluginServer() {
     server_->Shutdown();
     server_->Wait();
   }
+  if (!socket_path_.empty())
+    ::unlink(socket_path_.c_str());
 }
 
 bool PluginServer::Start(std::string *out_error) {
@@ -160,10 +161,15 @@ bool PluginServer::Start(std::string *out_error) {
   // ── 3. Build gRPC server ─────────────────────────────────────────────
   grpc::EnableDefaultHealthCheckService(true);
 
+  std::string socket_path;
+  std::string error;
+  if (!ReserveSocketPath(&socket_path, &error)) {
+    return fail(std::move(error));
+  }
+
   grpc::ServerBuilder builder;
   int selected_port = 0;
-  int hint_port = PickPort();
-  std::string listen_addr = "127.0.0.1:" + std::to_string(hint_port);
+  std::string listen_addr = "unix:" + socket_path;
   builder.AddListeningPort(listen_addr, creds, &selected_port);
 
   for (auto *svc : config_.services) {
@@ -179,16 +185,24 @@ bool PluginServer::Start(std::string *out_error) {
   if (selected_port == 0) {
     server_->Shutdown();
     server_.reset();
-    return fail("gRPC server started but reported port 0 (bind failed?)");
+    return fail("gRPC server started but did not bind " + listen_addr);
   }
-  port_ = selected_port;
+  socket_path_ = std::move(socket_path);
+
+  if (const char *group = std::getenv("PLUGIN_UNIX_SOCKET_GROUP"); group && *group) {
+    if (!SetGroupWritable(socket_path_, group, &error)) {
+      server_->Shutdown();
+      server_.reset();
+      return fail(std::move(error));
+    }
+  }
 
   // ── 4. Write go-plugin handshake ─────────────────────────────────────
   // Format: CORE-PROTO|APP-PROTO|NETWORK|ADDR|PROTOCOL|SERVER-CERT\n
   std::ostream &out = config_.output ? *config_.output : std::cout;
   out << "1"
-      << "|" << config_.handshake.protocol_version << "|tcp"
-      << "|127.0.0.1:" << port_ << "|grpc"
+      << "|" << config_.handshake.protocol_version << "|unix"
+      << "|" << socket_path_ << "|grpc"
       << "|" << server_cert_b64 << "\n";
   out.flush();
 

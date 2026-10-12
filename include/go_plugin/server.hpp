@@ -78,10 +78,12 @@ public:
     PluginServer& operator=(const PluginServer&) = delete;
 
     /**
-     * Validates the magic cookie, picks a port, starts the gRPC server,
-     * registers services, the built-in health-check service and go-plugin's
-     * controller, then writes the go-plugin handshake line to the configured
-     * output stream. The controller answers the host's request to stop by
+     * Validates the magic cookie, starts the gRPC server on a Unix socket in
+     * the directory the host names in PLUGIN_UNIX_SOCKET_DIR (the system's
+     * temporary directory when it names none), opened to the group it names in
+     * PLUGIN_UNIX_SOCKET_GROUP if any, registers services, the built-in
+     * health-check service and go-plugin's controller, then writes the
+     * go-plugin handshake line to the configured output stream. The controller answers the host's request to stop by
      * shutting the server down, which returns Wait().
      *
      * @param error  If non-null, receives a human-readable error message on
@@ -100,8 +102,8 @@ public:
     /** Initiates an orderly shutdown; safe to call from any thread. */
     void Shutdown();
 
-    /** Returns the TCP port the server is listening on (valid after Start()). */
-    int port() const { return port_; }
+    /** Returns the path of the socket the server listens on (valid after Start()). */
+    const std::string& socket_path() const { return socket_path_; }
 
 private:
     // Watches for the host (parent) process disappearing. When the host dies
@@ -121,7 +123,7 @@ private:
     ServeConfig config_;
     std::unique_ptr<grpc::Service> controller_;
     std::unique_ptr<grpc::Server> server_;
-    int port_ = 0;
+    std::string socket_path_;
 
     std::thread parent_watchdog_;
     std::mutex watchdog_mu_;
