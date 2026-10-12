@@ -46,8 +46,8 @@ protected:
             server_->Wait();
         }
         UnsetEnv(kCookieKey);
-        UnsetEnv("PLUGIN_MIN_PORT");
-        UnsetEnv("PLUGIN_MAX_PORT");
+        UnsetEnv("PLUGIN_UNIX_SOCKET_DIR");
+        UnsetEnv("PLUGIN_UNIX_SOCKET_GROUP");
     }
 
     static void SetEnv(const char* key, const char* value) { ::setenv(key, value, 1); }
@@ -64,7 +64,7 @@ protected:
 
     std::string handshake() const { return handshake_.str(); }
 
-    std::string target() const { return "127.0.0.1:" + std::to_string(server_->port()); }
+    std::string target() const { return "unix:" + server_->socket_path(); }
 
     go_plugin::ServeConfig config_;
 

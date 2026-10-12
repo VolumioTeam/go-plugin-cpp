@@ -6,6 +6,7 @@
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/impl/client_unary_call.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include "plugin_fixture.hpp"
 
@@ -14,15 +15,15 @@ namespace {
 
 using Server = PluginFixture;
 
-TEST_F(Server, ReportsNoPortUntilStarted) {
+TEST_F(Server, ReportsNoSocketUntilStarted) {
     go_plugin::PluginServer server(config_);
-    EXPECT_EQ(server.port(), 0);
+    EXPECT_TRUE(server.socket_path().empty());
 }
 
 TEST_F(Server, StartsAndShutsDown) {
     std::string error;
     ASSERT_TRUE(Start(&error)) << error;
-    EXPECT_GT(server().port(), 0);
+    EXPECT_FALSE(server().socket_path().empty());
 
     server().Shutdown();
     server().Wait();
@@ -47,6 +48,19 @@ TEST_F(Server, AnswersACallOnTheAdvertisedAddress) {
 
     ASSERT_TRUE(status.ok()) << status.error_message();
     EXPECT_EQ(reply.text(), "hello");
+}
+
+// A plugin leaves no socket behind for the next one to trip over.
+TEST_F(Server, RemovesItsSocketWhenItGoes) {
+    std::string path;
+    {
+        go_plugin::PluginServer server(config_);
+        std::string error;
+        ASSERT_TRUE(server.Start(&error)) << error;
+        path = server.socket_path();
+        ASSERT_EQ(::access(path.c_str(), F_OK), 0);
+    }
+    EXPECT_NE(::access(path.c_str(), F_OK), 0);
 }
 
 TEST_F(Server, ServeRefusesTheWrongCookie) {
