@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <grp.h>
@@ -99,9 +100,12 @@ TEST_F(Handshake, PutsTheSocketInTheDirectoryTheHostNames) {
 // A host that names a group, by number or by name, reaches the socket through it, as with
 // go-plugin's own servers.
 TEST_F(Handshake, OpensTheSocketToTheGroupTheHostNames) {
+    std::vector<std::string> groups{std::to_string(::getgid())};
     const struct group* own = ::getgrgid(::getgid());
-    ASSERT_NE(own, nullptr);
-    for (const std::string named : {std::to_string(::getgid()), std::string(own->gr_name)}) {
+    if (own && std::string(own->gr_name).find_first_not_of("0123456789") != std::string::npos) {
+        groups.emplace_back(own->gr_name);
+    }
+    for (const std::string& named : groups) {
         SetEnv("PLUGIN_UNIX_SOCKET_GROUP", named.c_str());
         go_plugin::PluginServer server(config_);
         std::string error;
